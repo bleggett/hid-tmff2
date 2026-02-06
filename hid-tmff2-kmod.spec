@@ -1,0 +1,179 @@
+# Kernel module package for hid-tmff2 - Thrustmaster force feedback driver
+#
+# This spec file follows Fedora packaging guidelines for kernel modules:
+# https://fedoraproject.org/wiki/Packaging:KernelModules
+#
+# To build for a specific kernel version:
+#   rpmbuild -ba --define 'kernel_version X.Y.Z-NNN.fcXX.x86_64' hid-tmff2-kmod.spec
+
+%global kmod_name hid-tmff2
+%global debug_package %{nil}
+
+# Allow building for specific kernel version, default to current
+%{!?kernel_version:%global kernel_version %(uname -r)}
+
+# Extract major kernel version for fuzzy matching (e.g., 6.18.7 -> 6.18)
+%global kver_major %(echo %{kernel_version} | cut -d. -f1-2)
+
+Name:           %{kmod_name}-kmod
+Version:        0.82
+Release:        1%{?dist}
+Summary:        Kernel module for Thrustmaster T300RS, T248 and other racing wheels
+
+License:        GPL-2.0-or-later
+URL:            https://github.com/Kimplul/hid-tmff2
+
+# Source tarball creation documented here:
+# git clone --recurse-submodules https://github.com/Kimplul/hid-tmff2.git
+# cd hid-tmff2
+# git archive --format=tar.gz --prefix=%{kmod_name}-%{version}/ \
+#   -o %{kmod_name}-%{version}.tar.gz HEAD
+# git submodule foreach --recursive \
+#   'git archive --format=tar --prefix=%{kmod_name}-%{version}/$path/ HEAD | \
+#    gzip >> %{kmod_name}-%{version}.tar.gz'
+Source0:        %{kmod_name}-%{version}.tar.gz
+
+BuildRequires:  kernel-devel >= %{kver_major}
+BuildRequires:  kernel-headers
+BuildRequires:  make
+BuildRequires:  gcc
+BuildRequires:  elfutils-libelf-devel
+
+# Weak dependency: most users will want this
+Recommends:     linuxconsoletools
+
+Requires(post): %{_sbindir}/depmod
+Requires(postun): %{_sbindir}/depmod
+
+# Provide modalias for hardware auto-loading
+Supplements:    modalias(hid:b0003g*v0000044Fp0000B65D)
+Supplements:    modalias(hid:b0003g*v0000044Fp0000B664)
+Supplements:    modalias(hid:b0003g*v0000044Fp0000B66[9DEF])
+Supplements:    modalias(hid:b0003g*v0000044Fp0000B689)
+Supplements:    modalias(hid:b0003g*v0000044Fp0000B69C)
+
+%description
+A Linux kernel module for Thrustmaster T300RS, T248, and experimental support
+for TX, T128, T598, TS-PC and TS-XW racing wheels.
+
+This package provides force feedback support and advanced features for supported
+Thrustmaster racing wheels. The driver includes wheel initialization modules
+(hid-tminit) and the main force feedback driver (hid-tmff-new).
+
+%prep
+%autosetup -n %{kmod_name}-%{version}
+
+# Verify submodules are present
+if [ ! -f deps/hid-tminit/Makefile ]; then
+    echo "ERROR: hid-tminit submodule not found in source tarball"
+    exit 1
+fi
+
+%build
+# Find kernel source directory - prefer exact match, fall back to latest compatible
+KDIR="/usr/src/kernels/%{kernel_version}"
+if [ ! -d "${KDIR}" ]; then
+    # Fall back to latest available kernel-devel with matching major version
+    KDIR=$(ls -1d /usr/src/kernels/%{kver_major}* 2>/dev/null | sort -V | tail -1)
+    if [ -z "${KDIR}" ] || [ ! -d "${KDIR}" ]; then
+        # Try even broader match - just find any kernel-devel
+        KDIR=$(ls -1d /usr/src/kernels/* 2>/dev/null | sort -V | tail -1)
+        if [ -z "${KDIR}" ] || [ ! -d "${KDIR}" ]; then
+            echo "ERROR: No kernel-devel package found"
+            exit 1
+        fi
+    fi
+    echo "WARNING: Exact kernel-devel for %{kernel_version} not found"
+    echo "         Using $(basename ${KDIR}) instead"
+fi
+
+echo "Building for kernel: $(basename ${KDIR})"
+
+# Reproducible build flags
+# Use fixed timestamp from spec file for reproducibility
+export SOURCE_DATE_EPOCH=$(date -d '2025-02-06' +%s)
+export KBUILD_BUILD_TIMESTAMP='Thu Feb  6 00:00:00 UTC 2025'
+export KBUILD_BUILD_USER='builder'
+export KBUILD_BUILD_HOST='localhost'
+
+# Build all modules
+make KDIR="${KDIR}" \
+     V=1 \
+     all
+
+# Record the actual kernel version we built for
+echo "$(basename ${KDIR})" > .built_kernel_version
+
+%install
+# Get the kernel version we actually built for
+BUILT_KERNEL=$(cat .built_kernel_version)
+echo "Installing modules for kernel: ${BUILT_KERNEL}"
+
+# Install kernel modules to standard location
+install -d %{buildroot}/lib/modules/${BUILT_KERNEL}/extra/%{kmod_name}
+install -m 0644 hid-tmff-new.ko \
+    %{buildroot}/lib/modules/${BUILT_KERNEL}/extra/%{kmod_name}/
+install -m 0644 deps/hid-tminit/hid-tminit-new.ko \
+    %{buildroot}/lib/modules/${BUILT_KERNEL}/extra/%{kmod_name}/
+install -m 0644 deps/hid-tminit/usb-tminit-new.ko \
+    %{buildroot}/lib/modules/${BUILT_KERNEL}/extra/%{kmod_name}/
+
+# Install udev rules
+install -D -m 0644 udev/99-thrustmaster.rules \
+    %{buildroot}%{_udevrulesdir}/99-thrustmaster.rules
+install -D -m 0644 udev/71-thrustmaster-steamdeck.rules \
+    %{buildroot}%{_udevrulesdir}/71-thrustmaster-steamdeck.rules
+
+# Install modprobe configuration
+install -D -m 0644 /dev/stdin \
+    %{buildroot}%{_sysconfdir}/modprobe.d/hid-tmff2.conf << 'EOF'
+# Blacklist the upstream hid-thrustmaster driver to prevent conflicts
+# The hid-tmff-new driver provides enhanced functionality
+blacklist hid_thrustmaster
+EOF
+
+# Store kernel version for post-install scripts
+install -D -m 0644 /dev/stdin \
+    %{buildroot}/lib/modules/${BUILT_KERNEL}/extra/%{kmod_name}/.rpm_kver << EOF
+${BUILT_KERNEL}
+EOF
+
+%files
+%license LICENSE
+%doc README.md
+/lib/modules/*/extra/%{kmod_name}/
+%{_udevrulesdir}/99-thrustmaster.rules
+%{_udevrulesdir}/71-thrustmaster-steamdeck.rules
+%config(noreplace) %{_sysconfdir}/modprobe.d/hid-tmff2.conf
+
+%post
+# Update module dependencies
+for kmod_dir in /lib/modules/*/extra/%{kmod_name}; do
+    if [ -f "${kmod_dir}/.rpm_kver" ]; then
+        kver=$(cat "${kmod_dir}/.rpm_kver")
+        if [ -d "/lib/modules/${kver}" ]; then
+            /sbin/depmod -a "${kver}" > /dev/null 2>&1 || :
+        fi
+    fi
+done
+
+%postun
+# Update module dependencies after removal
+if [ "$1" -eq 0 ]; then
+    # Package removal (not upgrade)
+    for kdir in /lib/modules/*; do
+        if [ -d "${kdir}" ]; then
+            kver=$(basename "${kdir}")
+            /sbin/depmod -a "${kver}" > /dev/null 2>&1 || :
+        fi
+    done
+fi
+
+%changelog
+* Thu Feb 06 2025 Build System <builder@localhost> - 0.82-1
+- Initial kmod package for hid-tmff2
+- Support for T300RS, T248, TX, T128, T598, TS-PC, TS-XW wheels
+- Includes hid-tminit dependency modules (hid-tminit-new, usb-tminit-new)
+- Provides udev rules for automatic wheel detection
+- Blacklists conflicting hid_thrustmaster driver
+- Implements reproducible build practices

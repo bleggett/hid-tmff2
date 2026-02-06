@@ -23,10 +23,9 @@ Summary:        Kernel module for Thrustmaster T300RS, T248 and other racing whe
 License:        GPL-2.0-or-later
 URL:            https://github.com/Kimplul/hid-tmff2
 
-# rpkg automatically generates tarball from git using the template macro below
-# For COPR: enable "Clone submodules recursively" to include deps/hid-tminit/
-# For local builds: run ./build-rpm.sh to generate tarball with submodules
+# rpkg omits submodules in the parent repo, but can pack them separately by pointing path into submodule
 Source0:        {{{ git_dir_pack }}}
+Source1:        {{{ git_dir_pack path="deps/hid-tminit" }}}
 
 BuildRequires:  kernel-devel >= %{kver_major}
 BuildRequires:  kernel-headers
@@ -56,14 +55,18 @@ Thrustmaster racing wheels. The driver includes wheel initialization modules
 (hid-tminit) and the main force feedback driver (hid-tmff-new).
 
 %prep
-# rpkg automatically handles extraction and setup from git
+# rpkg handles extraction of main source
 {{{ git_dir_setup_macro }}}
 
-# Verify hid-tminit submodule is present
+# Extract the hid-tminit submodule (Source1 packed by rpkg from deps/hid-tminit)
+# rpkg will pack it with the submodule's directory structure
+mkdir -p deps
+tar -xzf %{SOURCE1} -C deps
+
+# Verify submodule is in place
 if [ ! -f deps/hid-tminit/Makefile ]; then
-    echo "ERROR: hid-tminit submodule not found in source tarball"
-    echo "For COPR: build with 'copr-cli buildscm --submodules'"
-    echo "For local: run ./build-rpm.sh to generate proper tarball"
+    echo "ERROR: hid-tminit submodule not found after extraction"
+    echo "Submodule must be initialized for rpkg to pack it"
     exit 1
 fi
 

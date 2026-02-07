@@ -9,6 +9,9 @@
 %global kmod_name hid-tmff2
 %global debug_package %{nil}
 
+# Define paths if not already defined by systemd macros
+%{!?_udevrulesdir:%global _udevrulesdir /usr/lib/udev/rules.d}
+
 # Allow building for specific kernel version, default to current
 %{!?kernel_version:%global kernel_version %(uname -r)}
 

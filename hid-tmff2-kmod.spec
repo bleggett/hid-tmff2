@@ -23,9 +23,10 @@ Summary:        Kernel module for Thrustmaster T300RS, T248 and other racing whe
 License:        GPL-2.0-or-later
 URL:            https://github.com/Kimplul/hid-tmff2
 
-# rpkg omits submodules in the parent repo, but can pack them separately by pointing path into submodule
-Source0:        {{{ git_dir_pack }}}
-Source1:        {{{ git_dir_pack path="deps/hid-tminit" }}}
+# For COPR "make srpm": .copr/Makefile creates these tarballs with submodules
+# For local builds: run ./build-rpm.sh to generate tarball with submodules
+Source0:        %{kmod_name}-%{version}.tar.gz
+Source1:        hid-tminit.tar.gz
 
 BuildRequires:  kernel-devel >= %{kver_major}
 BuildRequires:  kernel-headers
@@ -55,18 +56,16 @@ Thrustmaster racing wheels. The driver includes wheel initialization modules
 (hid-tminit) and the main force feedback driver (hid-tmff-new).
 
 %prep
-# rpkg handles extraction of main source
-{{{ git_dir_setup_macro }}}
+# Extract main source
+%autosetup -n %{kmod_name}-%{version}
 
-# Extract the hid-tminit submodule (Source1 packed by rpkg from deps/hid-tminit)
-# rpkg will pack it with the submodule's directory structure
+# Extract hid-tminit submodule (Source1)
 mkdir -p deps
 tar -xzf %{SOURCE1} -C deps
 
 # Verify submodule is in place
 if [ ! -f deps/hid-tminit/Makefile ]; then
     echo "ERROR: hid-tminit submodule not found after extraction"
-    echo "Submodule must be initialized for rpkg to pack it"
     exit 1
 fi
 
